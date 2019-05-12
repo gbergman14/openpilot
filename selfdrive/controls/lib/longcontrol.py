@@ -129,13 +129,10 @@ class LongControl(object):
       if socket is self.live20:
         l20 = messaging.recv_one(socket)
 
-    if l20 is not None:
+    try:
       self.lead_1 = l20.live20.leadOne
-      if self.lead_1.status:
-        vRel = self.lead_1.vRel
-      else:
-        vRel = None
-    else:
+      vRel = self.lead_1.vRel
+    except:
       vRel = None
       
     #gas_max = interp(v_ego, CP.gasMaxBP, CP.gasMaxV)
