@@ -224,7 +224,7 @@ class LongitudinalMpc(object):
 
     stop_and_go_magic_number = 8.9408  # 20 mph
 
-    if v_ego <= 0.89408:  # 2 mph
+    if v_ego <= 1.34112:  # 3 mph
       self.stop_and_go = True
     elif v_ego >= stop_and_go_magic_number:
       self.stop_and_go = False
@@ -241,16 +241,23 @@ class LongitudinalMpc(object):
       x = [-15.6464, -11.62306, -7.84278, -5.45002, -4.37006, -3.21869, -1.72406, -0.91097, -0.49174, 0.0, 0.26822, 0.77499, 1.85325, 2.68511]  # relative velocity values
       y = [0.56, 0.5, 0.422, 0.336, 0.28, 0.21, 0.16, 0.112, 0.06502, 0, -0.0554, -0.1371, -0.2402, -0.3004]  # modification values
       TR_mod = interp(self.relative_velocity, x, y)
-      x = [0.0, 13.4112]
+
+      x = [8.9, 22.35]  # reduce relative velocity mod as speed increases
       y = [1.0, 0.8]
-      TR_mod *= interp(v_ego, x, y)
+      speed_distance_mod = interp(v_ego, x, y)
+
+      x = [0.0, 30.0, 60.0]  # increase relative velocity mod as distance increases
+      y = [0.8, 1.0, 1.2]
+      speed_distance_mod += interp(self.relative_distance, x, y)
+
+      TR_mod *= (speed_distance_mod / 2.0)
 
       x = [-4.4704, -2.2352, -0.8941, 0.0, 1.3411]  # self acceleration values
-      y = [0.1185, 0.0435, 0.012, 0.0, -0.0975]  # modification values
+      y = [0.136, 0.05, 0.014, 0.0, -0.112]  # modification values
       TR_mod += interp(a_ego, x, y)  # factor in self acceleration
 
       x = [-4.4903, -1.874, -0.6624, -0.2629, 0.0, 0.5588, 1.3411]  # lead acceleration values
-      y = [0.3033, 0.2404, 0.163, 0.0333, 0.0, -0.092, -0.156]  # modification values
+      y = [0.349, 0.276, 0.187, 0.038, 0.0, -0.106, -0.179]  # modification values
       TR_mod += interp(self.lead_acceleration, x, y)  # factor in lead car's acceleration; should perform better
 
       if real_TR < TR:
