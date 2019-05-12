@@ -72,7 +72,7 @@ class LongitudinalMpc(object):
       self.new_frame = False
     return int(round(max(min(rate, max_return), min_return)))  # ensure we return a value between range, in hertz
 
-  def calculate_tr(self, v_ego, car_state):
+  def calculate_tr(self, v_ego, car_state, a_ego):
     """
     Returns a follow time gap in seconds based on car state values
 
@@ -101,7 +101,7 @@ class LongitudinalMpc(object):
     if read_distance_lines == 2:
       self.new_frame = True  # for rate calculation so it doesn't update time multiple times a frame
       #self.save_car_data(v_ego)
-      generatedTR = self.dynamic_follow_hopefully_tha_best(v_ego)
+      generatedTR = self.dynamic_follow_hopefully_tha_best(v_ego, a_ego)
       generated_cost = self.generate_cost(generatedTR, v_ego)
 
       if abs(generated_cost - self.last_cost) > .15:
@@ -218,7 +218,7 @@ class LongitudinalMpc(object):
         TR = (TR * 0.5) + (real_TR * 0.5)
       return TR
 
-  def dynamic_follow_hopefully_tha_best(self, v_ego):
+  def dynamic_follow_hopefully_tha_best(self, v_ego, a_ego):
     x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
     y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
 
@@ -241,13 +241,18 @@ class LongitudinalMpc(object):
       x = [-15.6464, -11.62306, -7.84278, -5.45002, -4.37006, -3.21869, -1.72406, -0.91097, -0.49174, 0.0, 0.26822, 0.77499, 1.85325, 2.68511]  # relative velocity speeds
       y = [0.4032, 0.378, 0.3344, 0.2778, 0.2419, 0.189, 0.144, 0.101, 0.058, 0.0, -0.05, -0.123, -0.216, -0.27]  # modification values  # modification percentages converted from normal TR mod array
       TR_mod = np.interp(self.relative_velocity, x, y)
-      if real_TR < TR:
-        TR_mod = -TR_mod  # this flips the mod if the car is closer than generated TR somehow, so that negative relvel will increase distance, not shorten
-      TR = (TR * (1 - TR_mod)) + (real_TR * TR_mod)
+
+      x = [-4.4704, -2.2352, -0.8941, 0.0, 1.3411]  # self acceleration values
+      y = [0.1185, 0.0435, 0.012, 0.0, -0.0975]  # modification values
+      TR_mod += interp(a_ego, x, y)  # factor in self acceleration
 
       x = [-4.4903, -1.874, -0.6624, -0.2629, 0.0, 0.5588, 1.3411]  # lead acceleration values
       y = [0.3033, 0.2404, 0.163, 0.0333, 0.0, -0.092, -0.156]  # modification values
-      TR += interp(self.lead_acceleration, x, y)  # factor in lead car's acceleration; should perform better
+      TR_mod += interp(self.lead_acceleration, x, y)  # factor in lead car's acceleration; should perform better
+
+      if real_TR < TR:
+        TR_mod = -TR_mod  # this flips the mod if the car is closer than generated TR somehow, so that negative relvel will increase distance, not shorten
+      TR = (TR * (1 - TR_mod)) + (real_TR * TR_mod)
 
     return TR
 
@@ -372,6 +377,7 @@ class LongitudinalMpc(object):
 
   def update(self, CS, lead, v_cruise_setpoint):
     v_ego = CS.carState.vEgo
+    a_ego = CS.carState.aEgo
     try:
       self.relative_velocity = lead.vRel
       self.relative_distance = lead.dRel
@@ -413,7 +419,7 @@ class LongitudinalMpc(object):
 
     # Calculate mpc
     t = sec_since_boot()
-    TR = self.calculate_tr(v_ego, CS.carState)
+    TR = self.calculate_tr(v_ego, CS.carState, a_ego)
     n_its = self.libmpc.run_mpc(self.cur_state, self.mpc_solution, self.a_lead_tau, a_lead, TR)
     duration = int((sec_since_boot() - t) * 1e9)
     self.send_mpc_solution(n_its, duration)
