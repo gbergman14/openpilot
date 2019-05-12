@@ -243,7 +243,7 @@ class LongitudinalMpc(object):
       TR_mod = interp(self.relative_velocity, x, y)
       x = [0.0, 13.4112]
       y = [1.0, 0.8]
-      TR_mod = interp(v_ego, x, y) * TR_mod
+      TR_mod *= interp(v_ego, x, y)
 
       x = [-4.4704, -2.2352, -0.8941, 0.0, 1.3411]  # self acceleration values
       y = [0.1185, 0.0435, 0.012, 0.0, -0.0975]  # modification values
