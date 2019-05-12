@@ -238,9 +238,12 @@ class LongitudinalMpc(object):
 
     if self.relative_velocity is not None:  # if lead
       real_TR = self.relative_distance / v_ego if v_ego != 0 else TR
-      x = [-15.6464, -11.62306, -7.84278, -5.45002, -4.37006, -3.21869, -1.72406, -0.91097, -0.49174, 0.0, 0.26822, 0.77499, 1.85325, 2.68511]  # relative velocity speeds
-      y = [0.4032, 0.378, 0.3344, 0.2778, 0.2419, 0.189, 0.144, 0.101, 0.058, 0.0, -0.05, -0.123, -0.216, -0.27]  # modification values  # modification percentages converted from normal TR mod array
-      TR_mod = np.interp(self.relative_velocity, x, y)
+      x = [-15.6464, -11.62306, -7.84278, -5.45002, -4.37006, -3.21869, -1.72406, -0.91097, -0.49174, 0.0, 0.26822, 0.77499, 1.85325, 2.68511]  # relative velocity values
+      y = [0.56, 0.5, 0.422, 0.336, 0.28, 0.21, 0.16, 0.112, 0.06502, 0, -0.0554, -0.1371, -0.2402, -0.3004]  # modification values
+      TR_mod = interp(self.relative_velocity, x, y)
+      x = [0.0, 13.4112]
+      y = [1.0, 0.8]
+      TR_mod = interp(v_ego, x, y) * TR_mod
 
       x = [-4.4704, -2.2352, -0.8941, 0.0, 1.3411]  # self acceleration values
       y = [0.1185, 0.0435, 0.012, 0.0, -0.0975]  # modification values
