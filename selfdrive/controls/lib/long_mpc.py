@@ -31,6 +31,7 @@ class LongitudinalMpc(object):
     self.mpc_frame = 0  # idea thanks to kegman
     self.relative_velocity = None
     self.relative_distance = None
+    self.lead_acceleration = None
     self.stop_and_go = False
     self.dyn_time = 0
     self.last_ttc = None
@@ -244,6 +245,10 @@ class LongitudinalMpc(object):
         TR_mod = -TR_mod  # this flips the mod if the car is closer than generated TR somehow, so that negative relvel will increase distance, not shorten
       TR = (TR * (1 - TR_mod)) + (real_TR * TR_mod)
 
+      x = [-4.4903, -1.874, -0.6624, -0.2629, 0.0, 0.5588, 1.3411]  # lead acceleration values
+      y = [0.3033, 0.2404, 0.163, 0.0333, 0.0, -0.092, -0.156]  # modification values
+      TR += interp(self.lead_acceleration, x, y)  # factor in lead car's acceleration; should perform better
+
     return TR
 
   def ultimate_dynamic_follow(self, v_ego):  # works alright, just need to tune. good braking and close distance, too much braking at far distance
@@ -370,9 +375,11 @@ class LongitudinalMpc(object):
     try:
       self.relative_velocity = lead.vRel
       self.relative_distance = lead.dRel
+      self.lead_acceleration = lead.aLeadK
     except:  # if no lead car
       self.relative_velocity = None
       self.relative_distance = None
+      self.lead_acceleration = None
 
     # Setup current mpc state
     self.cur_state[0].x_ego = 0.0
