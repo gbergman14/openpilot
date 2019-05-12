@@ -206,6 +206,17 @@ class LongitudinalMpc(object):
     else:
       return TR
 
+  def dynamic_follow_average(self, v_ego):
+    x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
+    y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
+    TR = interpolate.interp1d(x_vel, y_mod, fill_value='extrapolate')(v_ego)[()]  # extrapolate above 90 mph
+
+    if self.relative_velocity is not None:  # if lead
+      real_TR = self.relative_distance / v_ego if v_ego != 0 else TR
+      if real_TR != TR:
+        TR = (TR * 0.5) + (real_TR * 0.5)
+      return TR
+
   def dynamic_follow_hopefully_tha_best(self, v_ego):
     x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
     y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
@@ -346,10 +357,10 @@ class LongitudinalMpc(object):
   def generate_cost(self, TR, v_ego):
     x = [.9, 1.8, 2.7]
     y = [1.0, .1, .05]
-    '''if v_ego != 0 and v_ego is not None:
+    if v_ego != 0 and v_ego is not None:
       real_TR = self.relative_distance / float(v_ego)  # switched to cost generation using actual distance from lead car; should be safer
       if abs(real_TR - TR) >= .25:  # use real TR if diff is greater than x safety threshold
-        TR = real_TR'''
+        TR = real_TR
 
     cost = round(float(interp(TR, x, y)), 3)
     return cost
