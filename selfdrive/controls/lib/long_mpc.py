@@ -31,7 +31,10 @@ class LongitudinalMpc(object):
     self.mpc_frame = 0  # idea thanks to kegman
     self.relative_velocity = None
     self.relative_distance = None
+    self.lead_acceleration = None
     self.stop_and_go = False
+    self.dyn_time = 0
+    self.last_ttc = None
     self.last_rate = None
     self.new_frame = True
 
@@ -60,7 +63,7 @@ class LongitudinalMpc(object):
     if self.last_rate is None or (current_time - self.last_rate) == 0:
       rate = int(round(40.42 * seconds))
     else:
-      rate = (1.0 / (current_time - self.last_rate)) * seconds
+      rate = (1.0 / (current_time - self.last_rate)) * float(seconds)
 
     min_return = 20
     max_return = seconds * 100
@@ -69,7 +72,7 @@ class LongitudinalMpc(object):
       self.new_frame = False
     return int(round(max(min(rate, max_return), min_return)))  # ensure we return a value between range, in hertz
 
-  def calculate_tr(self, v_ego, car_state):
+  def calculate_tr(self, v_ego, car_state, a_ego):
     """
     Returns a follow time gap in seconds based on car state values
 
@@ -97,8 +100,8 @@ class LongitudinalMpc(object):
 
     if read_distance_lines == 2:
       self.new_frame = True  # for rate calculation so it doesn't update time multiple times a frame
-      self.save_car_data(v_ego)
-      generatedTR = self.dynamic_follow(v_ego)
+      #self.save_car_data(v_ego)
+      generatedTR = self.dynamic_follow_hopefully_tha_best(v_ego, a_ego)
       generated_cost = self.generate_cost(generatedTR, v_ego)
 
       if abs(generated_cost - self.last_cost) > .15:
@@ -182,6 +185,153 @@ class LongitudinalMpc(object):
 
     return a
 
+  def calc_ttc(self, v_ego, v_lead, d_rel):
+    v_rel = v_ego - v_lead
+    if v_rel == 0:
+        return None
+    return d_rel / float(v_rel)
+
+  def dynamic_follow_test(self, v_ego):  # TESTED; mediocre performance
+    x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
+    y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
+    TR = interpolate.interp1d(x_vel, y_mod, fill_value='extrapolate')(v_ego)[()]  # extrapolate above 90 mph
+    if self.relative_velocity < 0 and self.relative_velocity is not None:
+      if v_ego != 0:
+        real_TR = self.relative_distance / v_ego
+      else:
+        real_TR = TR
+      x = [-11.176, -10.1237, -8.711, -7.1526, -5.2906, -2.6385, 0.0]
+      y = [0.8, 0.6, 0.4462, 0.2938, 0.1771, 0.051, 0]
+      TR_mod = interp(self.relative_velocity, x, y)
+      return (TR * (1 - TR_mod)) + ((real_TR / 1.5) * TR_mod)
+    else:
+      return TR
+
+  def dynamic_follow_average(self, v_ego):
+    x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
+    y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
+    TR = interpolate.interp1d(x_vel, y_mod, fill_value='extrapolate')(v_ego)[()]  # extrapolate above 90 mph
+
+    if self.relative_velocity is not None:  # if lead
+      real_TR = self.relative_distance / v_ego if v_ego != 0 else TR
+      if real_TR != TR:
+        TR = (TR * 0.5) + (real_TR * 0.5)
+      return TR
+
+  def dynamic_follow_hopefully_tha_best(self, v_ego, a_ego):
+    x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
+    y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
+
+    stop_and_go_magic_number = 8.9408  # 20 mph
+
+    if v_ego <= 1.34112:  # 3 mph
+      self.stop_and_go = True
+    elif v_ego >= stop_and_go_magic_number:
+      self.stop_and_go = False
+
+    if self.stop_and_go:  # this allows a smooth deceleration to a stop, while being able to have smooth stop and go
+      x = [stop_and_go_magic_number / 2.0, stop_and_go_magic_number]  # from 10 to 20 mph, ramp sng distance to regular dynamic follow value
+      y = [1.6, interp(x[1], x_vel, y_mod)]  # grab value from speed arrays
+      TR = interp(v_ego, x, y)
+    else:
+      TR = interpolate.interp1d(x_vel, y_mod, fill_value='extrapolate')(v_ego)[()]  # extrapolate above 90 mph
+
+    if self.relative_velocity is not None:  # if lead
+      real_TR = self.relative_distance / v_ego if v_ego != 0 else TR
+      x = [-15.6464, -11.62306, -7.84278, -5.45002, -4.37006, -3.21869, -1.72406, -0.91097, -0.49174, 0.0, 0.26822, 0.77499, 1.85325, 2.68511]  # relative velocity values
+      y = [0.56, 0.5, 0.422, 0.336, 0.28, 0.21, 0.16, 0.112, 0.06502, 0, -0.0554, -0.1371, -0.2402, -0.3004]  # modification values
+      TR_mod = interp(self.relative_velocity, x, y)
+
+      x = [8.9, 22.35]  # reduce relative velocity mod as speed increases
+      y = [1.0, 0.8]
+      speed_distance_mod = interp(v_ego, x, y)
+
+      x = [0.0, 30.0, 60.0]  # increase relative velocity mod as distance increases
+      y = [0.8, 1.0, 1.2]
+      speed_distance_mod += interp(self.relative_distance, x, y)
+
+      TR_mod *= (speed_distance_mod / 2.0)
+
+      x = [-4.4704, -2.2352, -0.8941, 0.0, 1.3411]  # self acceleration values
+      y = [0.136, 0.05, 0.014, 0.0, -0.112]  # modification values
+      TR_mod += interp(a_ego, x, y)  # factor in self acceleration
+
+      x = [-4.4903, -1.874, -0.6624, -0.2629, 0.0, 0.5588, 1.3411]  # lead acceleration values
+      y = [0.349, 0.276, 0.187, 0.038, 0.0, -0.106, -0.179]  # modification values
+      TR_mod += interp(self.lead_acceleration, x, y)  # factor in lead car's acceleration; should perform better
+
+      if real_TR < TR:
+        TR_mod = -TR_mod  # this flips the mod if the car is closer than generated TR somehow, so that negative relvel will increase distance, not shorten
+      TR = (TR * (1 - TR_mod)) + (real_TR * TR_mod)
+
+    return TR
+
+  def ultimate_dynamic_follow(self, v_ego):  # works alright, just need to tune. good braking and close distance, too much braking at far distance
+    TR = 1.2
+    if self.relative_velocity is not None:
+      if self.relative_velocity < 0 and v_ego > 2.2352:
+        if v_ego != 0:
+          real_TR = self.relative_distance / v_ego
+        else:
+          real_TR = TR
+        if real_TR > TR:  # do dynamic follow stuff here
+          x = [0.0, 5.0]
+          y = [.75, .25]
+          diff = interp(abs(TR-real_TR), x, y)
+          x = [-8.9408, 0.0]
+          y = [3.5, 3.0]
+          try:
+            val = math.sqrt((TR*(1-diff) + (real_TR*diff))**(abs(TR-real_TR)*3.0))
+          except:
+            return TR
+          x = [-8.9408, 0]
+          y = [16, 50]
+          x = [0, abs(TR-real_TR) * 50.0]
+          y = [TR, real_TR]
+          return interp(val, x, y)
+    return TR
+
+  def new_dynamic_follow(self, v_ego):  # TODO: UNTESTED
+    TR = 1.2
+    if self.relative_velocity < 0 and self.relative_velocity is not None:
+      if v_ego != 0:
+        real_TR = self.relative_distance / v_ego
+      else:
+        real_TR = TR
+      if real_TR > TR:  # do dynamic follow stuff here
+        return (real_TR + TR) / 1.8
+      else:
+        return TR
+    else:
+      return TR
+
+  def dyn_fol_exp(self, v_ego):
+    des_TR = 1.6
+    if self.relative_velocity < 0 and self.relative_velocity is not None and self.relative_distance is not None:
+      if self.dyn_time >= self.last_ttc or self.last_ttc is None:
+        self.last_ttc = self.calc_ttc(v_ego, self.relative_velocity + v_ego, self.relative_distance) * self.calc_rate()  # to frames
+        self.dyn_time = 0
+      ttc = self.calc_ttc(v_ego, self.relative_velocity + v_ego, self.relative_distance) * self.calc_rate()
+      if abs(self.last_ttc - ttc) > 3.0:
+        self.last_ttc = ttc
+        self.dyn_time = 0
+      if v_ego != 0:
+        curr_TR = self.relative_distance / v_ego
+        x = [-11.176, 0]
+        y = [0, curr_TR / 4.0]
+        curr_TR -= interp(self.relative_velocity, x, y)
+      else:
+        curr_TR = des_TR
+      x = [0, self.last_ttc / 4.0]
+      y = [curr_TR, des_TR]
+      dyn_TR = interp(self.dyn_time, x, y)
+      self.dyn_time += 1
+      return dyn_TR
+    else:
+      self.dyn_time = 0
+      self.last_ttc = None
+      return des_TR
+
   def dynamic_follow(self, velocity):  # in m/s
     x_vel = [0.0, 1.86267, 3.72533, 5.588, 7.45067, 9.31333, 11.55978, 13.645, 22.352, 31.2928, 33.528, 35.7632, 40.2336]  # velocity
     y_mod = [1.03, 1.05363, 1.07879, 1.11493, 1.16969, 1.25071, 1.36325, 1.43, 1.6, 1.7, 1.75618, 1.85, 2.0]  # distances
@@ -237,12 +387,15 @@ class LongitudinalMpc(object):
 
   def update(self, CS, lead, v_cruise_setpoint):
     v_ego = CS.carState.vEgo
+    a_ego = CS.carState.aEgo
     try:
       self.relative_velocity = lead.vRel
       self.relative_distance = lead.dRel
+      self.lead_acceleration = lead.aLeadK
     except:  # if no lead car
       self.relative_velocity = None
       self.relative_distance = None
+      self.lead_acceleration = None
 
     # Setup current mpc state
     self.cur_state[0].x_ego = 0.0
@@ -276,7 +429,7 @@ class LongitudinalMpc(object):
 
     # Calculate mpc
     t = sec_since_boot()
-    TR = self.calculate_tr(v_ego, CS.carState)
+    TR = self.calculate_tr(v_ego, CS.carState, a_ego)
     n_its = self.libmpc.run_mpc(self.cur_state, self.mpc_solution, self.a_lead_tau, a_lead, TR)
     duration = int((sec_since_boot() - t) * 1e9)
     self.send_mpc_solution(n_its, duration)
